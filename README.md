@@ -1,4 +1,4 @@
-# app-forward-v2
+# forward
 
 Computes an MEG/EEG forward solution (lead-field matrix) using MNE-Python.
 
