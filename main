@@ -9,6 +9,15 @@
 set -e
 set -x
 
+if [ -n "$FS_LICENSE" ] && [ -f "$FS_LICENSE" ]; then
+    cp "$FS_LICENSE" license.txt
+elif [ -n "$FREESURFER_LICENSE" ]; then
+    echo $FREESURFER_LICENSE > license.txt
+else
+    echo "Please set FREESURFER_LICENSE or FS_LICENSE in resource environment" && exit 1
+fi
+
 singularity exec \
-  docker://aunnikri642/app-freesurfer-mne-source-recon \
+  -B `pwd`/license.txt:/opt/freesurfer/license.txt \
+  docker://brainlifemeeg/mne-freesurfer:1.12.1-7.4.1 \
   python3 main.py
