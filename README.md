@@ -19,7 +19,7 @@ The forward solution maps from source space (dipoles on the cortical surface) to
 
 | File | Description |
 |---|---|
-| `out_dir/forward-fwd.fif` | Forward solution (lead-field matrix) |
+| `out_dir/fwd.fif` | Forward solution (lead-field matrix) |
 
 ## Configuration
 
@@ -31,7 +31,7 @@ The forward solution maps from source space (dipoles on the cortical surface) to
 
 ```
 app-source-space-v2  →  src.fif   ─┐
-app-coreg-v2         →  trans.fif  ├→  app-forward-v2  →  forward-fwd.fif
+app-coreg-v2         →  trans.fif  ├→  app-forward-v2  →  fwd.fif
 app-bem-v2           →  bem.fif   ─┘
 epochs / evoked / raw ─────────────┘
 ```
@@ -44,3 +44,7 @@ epochs / evoked / raw ─────────────┘
 ## Container
 
 `docker://aunnikri642/app-freesurfer-mne-source-recon` (MNE 1.11)
+
+## Citations
+
+Hayashi, S., Caron, B.A., Heinsfeld, A.S. et al. brainlife.io: a decentralized and open-source cloud platform to support neuroscience research. Nat Methods 21, 809–813 (2024). https://doi.org/10.1038/s41592-024-02237-2

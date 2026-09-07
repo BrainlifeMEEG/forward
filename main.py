@@ -9,7 +9,7 @@ Based on: https://github.com/guiomar/app-fw-solution
 
 Inputs : sensor data (epochs or raw FIF), source space (src.fif from app-source-space-v2),
          trans.fif (from app-coreg-v2), bem-sol.fif (from app-bem-v2).
-Outputs: forward-fwd.fif
+Outputs: fwd.fif
 """
 
 import os
@@ -36,6 +36,7 @@ from brainlife_utils import (
     add_info_to_product,
     add_image_to_product,
     create_product_json,
+    setup_offscreen_3d_backend,
 )
 
 setup_matplotlib_backend()
@@ -54,25 +55,35 @@ config = load_config()
 # Priority: evoked > epochs > raw (most to least downstream/processed).
 # Brainlife config keys: evoked='evoked', epochs='epo', raw='mne'
 # Brainlife may send a directory path — resolve to the actual FIF file.
-def _resolve_fif(path, alt_names=None):
-    """Return file path: direct, or try alt_names in the same directory."""
-    if not path:
-        return None
-    if os.path.isfile(path):
-        return path
-    _dir = os.path.dirname(path)
-    for name in (alt_names or []):
+epochs_file = config.get('epo') or None
+if epochs_file and not os.path.isfile(epochs_file):
+    _dir = os.path.dirname(epochs_file)
+    epochs_file = None
+    for name in ('meg-epo.fif', 'epochs.fif', 'epo.fif'):
         _c = os.path.join(_dir, name)
         if os.path.isfile(_c):
-            return _c
-    return None
+            epochs_file = _c
+            break
 
-epochs_file = _resolve_fif(config.get('epo'),
-                            ['meg-epo.fif', 'epochs.fif', 'epo.fif'])
-raw_file    = _resolve_fif(config.get('mne'),
-                            ['raw.fif', 'meg.fif'])
-evoked_file = _resolve_fif(config.get('evoked'),
-                            ['evokeds_ave.fif', 'ave.fif', 'evoked-ave.fif'])
+raw_file = config.get('mne') or None
+if raw_file and not os.path.isfile(raw_file):
+    _dir = os.path.dirname(raw_file)
+    raw_file = None
+    for name in ('raw.fif', 'meg.fif'):
+        _c = os.path.join(_dir, name)
+        if os.path.isfile(_c):
+            raw_file = _c
+            break
+
+evoked_file = config.get('evoked') or None
+if evoked_file and not os.path.isfile(evoked_file):
+    _dir = os.path.dirname(evoked_file)
+    evoked_file = None
+    for name in ('evokeds_ave.fif', 'ave.fif', 'evoked-ave.fif'):
+        _c = os.path.join(_dir, name)
+        if os.path.isfile(_c):
+            evoked_file = _c
+            break
 
 info = None
 try:
@@ -179,7 +190,16 @@ except Exception as e:
 # Brainlife config keys: trans='trans', bem='fif' (meg/fif datatype)
 trans_file = config.get('trans') or None
 bem_file   = config.get('fif') or None
-mindist    = float(config.get('mindist') or 5.0)
+try:
+    mindist = float(config.get('mindist') or 5.0)
+except (TypeError, ValueError) as e:
+    add_info_to_product(
+        report_items,
+        f"FATAL: Invalid 'mindist' value: {config.get('mindist')!r} ({e})",
+        "error"
+    )
+    create_product_json(report_items)
+    sys.exit(1)
 
 if trans_file:
     if os.path.isfile(trans_file):
@@ -275,48 +295,7 @@ report = mne.Report(title='Forward Solution Report')
 
 if _using_fsaverage_src:
     try:
-        from qtpy.QtWidgets import QApplication
-        _qapp = QApplication.instance() or QApplication(sys.argv)
-
-        import pyvista as pv
-        pv.OFF_SCREEN = True
-        mne.viz.set_3d_backend('pyvistaqt')
-
-        from mne.viz.backends._pyvista import (
-            PyVistaFigure, Plotter as PVPlotter, _PyVistaRenderer, _ALL_PLOTTERS,
-        )
-        import mne.viz.backends.renderer as renderer_mod
-
-        def _patched_build(self):
-            if self._plotter is None:
-                store_filtered = {k: v for k, v in self.store.items()
-                                  if k in ('window_size', 'shape', 'border', 'multi_samples')}
-                plotter = PVPlotter(off_screen=True, **store_filtered)
-                plotter.background_color = self.background_color
-                self._plotter = plotter
-                try:
-                    _ALL_PLOTTERS[plotter._id_name] = plotter
-                except AttributeError:
-                    pass
-            if self.plotter.iren is not None:
-                self.plotter.iren.initialize()
-                def safe_update(stime=1, force_redraw=True):
-                    self.plotter.render()
-                self.plotter.update = safe_update
-            return self.plotter
-
-        PyVistaFigure._build = _patched_build
-
-        class _OffscreenRenderer(_PyVistaRenderer):
-            _kind = 'pyvistaqt'
-            def show(self):
-                self.figure.plotter.show(auto_close=False)
-            def __getattr__(self, name):
-                if name.startswith(('_window_', '_dock_', '_enable_', '_disable_')):
-                    return lambda *a, **kw: None
-                raise AttributeError(name)
-
-        renderer_mod.backend._Renderer = _OffscreenRenderer
+        setup_offscreen_3d_backend()
 
         fig_align = mne.viz.plot_alignment(
             info,
