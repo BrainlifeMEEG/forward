@@ -336,8 +336,11 @@ try:
             mindist=mindist, n_jobs=1, verbose=True
         )
 
-    elif modality == 'eeg':
-        # EEG template fallback: use fsaverage 3-layer BEM (ships with MNE).
+    else:
+        # Template path: fsaverage 3-layer BEM (ships with MNE) plus MNE's
+        # built-in fsaverage head->MRI transform. Available to MEG, EEG and
+        # MEEG alike.
+        #
         # A sphere model must NOT be used here — radial dipoles produce zero
         # potential on a perfect sphere (Helmholtz), giving zero leadfield columns
         # → depth weighting: 1/0 = inf → NaN in make_inverse_operator.
@@ -348,20 +351,30 @@ try:
             f"No trans/BEM provided — using fsaverage 3-layer BEM: {_bem_path}",
             "info"
         )
-        fwd = mne.make_forward_solution(
-            info, trans='fsaverage', src=src, bem=_bem_path,
-            meg=False, eeg=True,
-            mindist=mindist, n_jobs=1, verbose=True
-        )
-
-    else:
         add_info_to_product(
             product_items,
-            "FATAL: MEG forward solution requires trans.fif and bem-sol.fif.",
-            "error"
+            "Template head model: no coregistration was performed. trans='fsaverage' "
+            "is a fixed transform shipped with MNE, not a fit to this subject. "
+            "Source locations will be less accurate and can be off by multiple "
+            "centimetres — do not over-interpret them.",
+            "warning"
         )
-        create_product_json(product_items)
-        sys.exit(1)
+        if use_meg:
+            add_info_to_product(
+                product_items,
+                "MEG on the template path: MEG sensor positions come from this "
+                "recording but the head is fsaverage, so a head-size mismatch is "
+                "not corrected (MEG sensors are not projected onto the scalp the "
+                "way EEG electrodes are). If this recording has digitized head "
+                "points, coregistering against fsaverage with app-coreg-v2 and "
+                "connecting trans/BEM/source space will be more accurate.",
+                "warning"
+            )
+        fwd = mne.make_forward_solution(
+            info, trans='fsaverage', src=src, bem=_bem_path,
+            meg=use_meg, eeg=use_eeg,
+            mindist=mindist, n_jobs=1, verbose=True
+        )
 
     _method = "native BEM + trans" if (trans_file and bem_file) else "fsaverage 3-layer BEM (template)"
     add_info_to_product(
@@ -371,7 +384,24 @@ try:
         "info"
     )
 except Exception as e:
-    add_info_to_product(product_items, f"FATAL: Forward solution failed: {e}", "error")
+    # make_forward_solution(on_inside='raise', the default since MNE 1.10) raises
+    # when MEG sensors fall inside the outer skin surface. On the template path
+    # that means the subject's head is smaller than fsaverage, which is the
+    # failure MNE-BIDS-Pipeline warns about for unscaled fsaverage.
+    if 'inside the' in str(e) and 'MEG sensor' in str(e):
+        add_info_to_product(
+            product_items,
+            f"FATAL: {e}\n\n"
+            "On the fsaverage template path this means this subject's head is "
+            "smaller than fsaverage, so the template scalp swallows the MEG "
+            "sensors. An unscaled template cannot be used for this recording. "
+            "Coregister against fsaverage with app-coreg-v2 (and build the BEM "
+            "and source space from the same subject), or supply the subject's "
+            "own FreeSurfer anatomy.",
+            "error"
+        )
+    else:
+        add_info_to_product(product_items, f"FATAL: Forward solution failed: {e}", "error")
     create_product_json(product_items)
     sys.exit(1)
 
