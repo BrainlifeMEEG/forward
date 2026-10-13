@@ -144,7 +144,7 @@ add_info_to_product(
     "info"
 )
 
-# == LOAD SOURCE SPACE ==
+# == RESOLVE SOURCE SPACE PATH ==
 # Brainlife maps raw source_space datatype to config key 'output' (a directory).
 # Find the src.fif file inside that directory.
 _src_dir  = config.get('output') or None
@@ -212,57 +212,101 @@ if bem_file:
             bem_file = None
 
 # == VALIDATE INPUT COMBINATION ==
-# src, trans and bem must all describe the SAME head. A source space lives in its
-# subject's MRI coordinates, the BEM surfaces live in that same subject's MRI
-# coordinates, and trans maps head -> that subject's MRI.
+# The source space, the BEM and trans must all describe the SAME head. A source
+# space is expressed in its own subject's MRI coordinates, the BEM surfaces are
+# in that same subject's MRI coordinates, and trans maps head -> that MRI.
 #
-# MNE does not check this. make_forward_solution() will happily combine a template
-# source space with a native BEM and return a forward solution that completes
-# without error but is anatomically meaningless; the only symptom is dipoles
-# silently discarded by the mindist containment test.
+# MNE does not check this. make_forward_solution() will happily combine a
+# template source space with a native BEM and return a forward solution that
+# completes without error but places the dipoles in a different brain; the only
+# symptom is sources silently discarded by the mindist containment test.
 # See https://mne.tools/stable/auto_tutorials/forward/20_source_alignment.html
-# and the template workflow in .../forward/35_eeg_no_mri.html, which takes trans,
-# src and bem all from fsaverage.
 #
-# Only two combinations are therefore allowed:
-#   all three provided -> native anatomy
-#   none provided      -> fsaverage template throughout (EEG only)
-_provided = {'source space': bool(src_file),
-             'trans': bool(trans_file),
-             'BEM': bool(bem_file)}
-_have    = [k for k, v in _provided.items() if v]
-_missing = [k for k, v in _provided.items() if not v]
+# Both native and template work, for MEG and for EEG, so long as all three
+# pieces agree. The source space carries its subject name (subject_his_id),
+# which is what lets a user-supplied fsaverage source space be told apart from
+# a native one.
+_n_headmodel = int(bool(trans_file)) + int(bool(bem_file))
 
-if _have and _missing:
+# Load the source space now (if one was given) so its subject can be checked.
+src = None
+src_subject = None
+if src_file:
+    try:
+        src = mne.read_source_spaces(src_file)
+        src_subject = src[0].get('subject_his_id')
+        add_info_to_product(
+            product_items,
+            f"Loaded source space: {sum(s['nuse'] for s in src)} sources"
+            f" (subject: {src_subject or 'unknown'})",
+            "info"
+        )
+    except Exception as e:
+        add_info_to_product(product_items, f"FATAL: Could not load source space: {e}", "error")
+        create_product_json(product_items)
+        sys.exit(1)
+
+if _n_headmodel == 1:
+    _missing_hm = 'BEM' if trans_file else 'trans'
     add_info_to_product(
         product_items,
-        "FATAL: incomplete head model — got " + ", ".join(_have) +
-        " but no " + ", ".join(_missing) + ". "
-        "The source space, BEM and trans must all come from the same subject: "
-        "mixing a template with native anatomy yields a forward solution that "
-        "looks fine but places dipoles in the wrong brain. "
-        "Connect the missing input(s): " + ", ".join(_missing) + "." +
-        ("" if modality != 'eeg' else
-         " Alternatively, disconnect all three to use the fsaverage template "
-         "throughout (EEG-only; MEG always requires a native trans and BEM)."),
+        f"FATAL: got one half of the head model but not the other — '{_missing_hm}' "
+        "is missing. trans and BEM must be supplied together.",
         "error"
     )
     create_product_json(product_items)
     sys.exit(1)
 
-try:
-    if src_file:
-        src = mne.read_source_spaces(src_file)
+if _n_headmodel == 2 and not src_file:
+    add_info_to_product(
+        product_items,
+        "FATAL: a trans and BEM were supplied but no source space. The app would "
+        "otherwise fall back to an fsaverage template source space and combine it "
+        "with your native head model, placing the dipoles in a different brain. "
+        "Connect the source space from app-source-space-v2 (built from the same "
+        "FreeSurfer subject as the BEM), or disconnect the trans and BEM too.",
+        "error"
+    )
+    create_product_json(product_items)
+    sys.exit(1)
+
+if _n_headmodel == 0 and src_file:
+    # No head model given, so the fsaverage template BEM and trans='fsaverage'
+    # will be used below. That is only consistent if the source space is itself
+    # fsaverage.
+    if src_subject != 'fsaverage':
         add_info_to_product(
             product_items,
-            f"Loaded source space: {sum(s['nuse'] for s in src)} sources",
-            "info"
+            f"FATAL: the source space belongs to subject "
+            f"'{src_subject or 'unknown'}', but no trans or BEM was supplied, so "
+            "the fsaverage template head model would be used against it. "
+            "Connect the trans (app-coreg-v2) and BEM (app-bem-v2) built from "
+            f"the same subject as this source space"
+            + ("" if src_subject else " (the source space carries no subject name, "
+               "so consistency cannot be verified)") + ".",
+            "error"
         )
-    else:
-        # No source space provided — fall back to fsaverage oct6
-        add_info_to_product(product_items, "No source space provided — using fsaverage oct6 template.", "warning")
-        subjects_dir = mne.datasets.fetch_fsaverage(verbose=False)
-        subjects_dir = os.path.dirname(subjects_dir)  # strip /fsaverage suffix
+        create_product_json(product_items)
+        sys.exit(1)
+    add_info_to_product(
+        product_items,
+        "Source space is fsaverage and no head model was supplied — using the "
+        "fsaverage template throughout.",
+        "info"
+    )
+    _using_fsaverage_src = True
+    subjects_dir = os.path.dirname(mne.datasets.fetch_fsaverage(verbose=False))
+
+if not src_file:
+    # Nothing supplied at all — build the fsaverage template source space.
+    try:
+        add_info_to_product(
+            product_items,
+            "No source space, trans or BEM supplied — using the fsaverage "
+            "template throughout (oct6).",
+            "warning"
+        )
+        subjects_dir = os.path.dirname(mne.datasets.fetch_fsaverage(verbose=False))
         src = mne.setup_source_space(
             'fsaverage', spacing='oct6',
             subjects_dir=subjects_dir, add_dist=False, verbose=False
@@ -273,10 +317,10 @@ try:
             f"fsaverage source space: {sum(s['nuse'] for s in src)} sources",
             "info"
         )
-except Exception as e:
-    add_info_to_product(product_items, f"FATAL: Could not load/create source space: {e}", "error")
-    create_product_json(product_items)
-    sys.exit(1)
+    except Exception as e:
+        add_info_to_product(product_items, f"FATAL: Could not create fsaverage source space: {e}", "error")
+        create_product_json(product_items)
+        sys.exit(1)
 
 # == COMPUTE FORWARD SOLUTION ==
 trans_obj = None
