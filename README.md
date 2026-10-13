@@ -9,30 +9,57 @@ Computes an MEG/EEG forward solution (lead-field matrix) using MNE-Python's
 cortical surface) to sensor space (MEG/EEG channels). It combines a pre-computed source space
 (`src.fif`), a coregistration transform (`trans.fif`), and a BEM solution (`bem-sol.fif`).
 
-These three must describe the same head, so the app accepts them only all together or not at
-all. Connect all three to use the subject's own anatomy. Connect none of them and the app
-uses the fsaverage template throughout — an `oct6` template source space,
-`trans='fsaverage'` and the fsaverage 3-layer BEM (a sphere model is not used because radial
-dipoles give zero potential on a perfect sphere). Any partial combination exits with an error
-naming what to connect: a source space is expressed in its own subject's MRI coordinates, as
-are the BEM surfaces, and `trans` maps head to that same MRI, so mixing a template with native
-anatomy places the dipoles in a different brain and silently produces a meaningless forward
-solution.
-
-The template path is available to MEG, EEG and MEEG alike, but it performs **no
-coregistration** — `trans='fsaverage'` is a fixed transform shipped with MNE, not a fit to
-this subject — so locations can be off by multiple centimetres. For MEG this matters more
-than for EEG, because MEG sensor positions come from the recording while the head is
-fsaverage, and nothing projects them onto the template scalp the way EEG electrodes are
-projected. If a head smaller than fsaverage would leave MEG sensors inside the template
-scalp, the app exits with an error rather than producing a meaningless solution. Where
-digitized head points exist, coregistering against fsaverage with app-coreg-v2 and
-connecting all three inputs is more accurate than the template path.
+These three must describe the same head. A source space is expressed in its own subject's
+MRI coordinates, the BEM surfaces are in that same subject's MRI coordinates, and `trans`
+maps head to that MRI — so mixing a template with native anatomy places the dipoles in a
+different brain. MNE does not check this and will return a forward solution that completes
+without error but is anatomically meaningless, so the app checks it instead. See
+**How the app decides what to do** below.
 
 The app generates:
 - the forward solution (`fwd.fif`)
 - an HTML report
 - a sensor-head alignment figure, showing the transform actually used
+
+### How the app decides what to do
+
+`output` (source space), `trans` and `fif` (BEM) are accepted **all together or not at all**.
+The source space carries the name of the subject it was built from, which is what lets a
+template source space be told apart from a native one.
+
+| `output` (src) | `trans` | `fif` (BEM) | src subject | What happens |
+|---|---|---|---|---|
+| ✅ | ✅ | ✅ | any | **Native.** Your anatomy throughout. Best accuracy. |
+| ❌ | ❌ | ❌ | — | **Template.** fsaverage `oct6` source space, `trans='fsaverage'`, fsaverage 3-layer BEM. |
+| ✅ | ❌ | ❌ | `fsaverage` | **Template**, with your own source space (lets you choose the spacing). |
+| ✅ | ❌ | ❌ | native, e.g. `sub-01` | ⛔ Error — a native source space against the template head model. |
+| ❌ | ✅ | ✅ | — | ⛔ Error — a template source space against your native head model. |
+| ✅ | ✅ | ❌ | any | ⛔ Error — `trans` and BEM must be supplied together. |
+| ✅ | ❌ | ✅ | any | ⛔ Error — `trans` and BEM must be supplied together. |
+
+Every error names exactly which input to connect. All paths work for **MEG, EEG and MEEG**.
+
+#### Native vs template
+
+| | Native | Template |
+|---|---|---|
+| Source space | yours, from app-source-space-v2 | fsaverage `oct6` |
+| Head↔MRI transform | fitted by app-coreg-v2 (ICP) | fixed `fsaverage-trans.fif`, **nothing fitted** |
+| BEM | yours, from app-bem-v2 | fsaverage 3-layer |
+| Needs a FreeSurfer subject? | yes | no |
+| Accuracy | best available | locations can be off by **multiple centimetres** |
+
+The template path performs **no coregistration at all**. For MEG this matters more than for
+EEG: MEG sensor positions come from the recording while the head is fsaverage, and nothing
+projects them onto the template scalp the way EEG electrodes are projected, so a head-size
+mismatch goes uncorrected. If the subject's head is small enough that the template scalp
+would swallow the MEG sensors, `make_forward_solution` raises (`on_inside='raise'`) and the
+app reports it rather than producing a meaningless solution.
+
+Where digitized head points exist, a middle route is more accurate than the template: run
+app-coreg-v2, app-bem-v2 and app-source-space-v2 all against an fsaverage FreeSurfer subject,
+then connect all three. That gives a real ICP fit to the subject's head points while still
+needing no individual MRI.
 
 ## Inputs
 
