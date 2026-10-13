@@ -43,6 +43,7 @@ setup_matplotlib_backend()
 import matplotlib.pyplot as plt
 
 import mne
+from mne.io.constants import FIFF
 
 mne.set_log_level('WARNING')
 
@@ -149,7 +150,12 @@ add_info_to_product(
 _src_dir  = config.get('output') or None
 src_file  = None
 _using_fsaverage_src = False
-if _src_dir and os.path.isdir(_src_dir):
+if _src_dir and os.path.isfile(_src_dir):
+    # Brainlife may map the datatype straight to the .fif rather than its
+    # directory; treat that as provided too, otherwise the guard below reports
+    # a missing source space the user did in fact connect.
+    src_file = _src_dir
+elif _src_dir and os.path.isdir(_src_dir):
     for _f in os.listdir(_src_dir):
         if _f.endswith('.fif') and 'src' in _f:
             src_file = os.path.join(_src_dir, _f)
@@ -170,6 +176,15 @@ except (TypeError, ValueError) as e:
     add_info_to_product(
         product_items,
         f"FATAL: Invalid 'mindist' value: {config.get('mindist')!r} ({e})",
+        "error"
+    )
+    create_product_json(product_items)
+    sys.exit(1)
+
+if mindist < 0:
+    add_info_to_product(
+        product_items,
+        f"FATAL: 'mindist' must be >= 0 mm (got {mindist}).",
         "error"
     )
     create_product_json(product_items)
@@ -226,8 +241,10 @@ if _have and _missing:
         "The source space, BEM and trans must all come from the same subject: "
         "mixing a template with native anatomy yields a forward solution that "
         "looks fine but places dipoles in the wrong brain. "
-        "Either connect the missing input(s) (" + ", ".join(_missing) + "), "
-        "or disconnect all three to use the fsaverage template throughout.",
+        "Connect the missing input(s): " + ", ".join(_missing) + "." +
+        ("" if modality != 'eeg' else
+         " Alternatively, disconnect all three to use the fsaverage template "
+         "throughout (EEG-only; MEG always requires a native trans and BEM)."),
         "error"
     )
     create_product_json(product_items)
@@ -280,10 +297,6 @@ try:
         # A sphere model must NOT be used here — radial dipoles produce zero
         # potential on a perfect sphere (Helmholtz), giving zero leadfield columns
         # → depth weighting: 1/0 = inf → NaN in make_inverse_operator.
-        if not _using_fsaverage_src:
-            # Need subjects_dir for the BEM path — fetch fsaverage if not already done
-            _fsa = mne.datasets.fetch_fsaverage(verbose=False)
-            subjects_dir = os.path.dirname(str(_fsa))
         _bem_path = os.path.join(subjects_dir, 'fsaverage', 'bem',
                                  'fsaverage-5120-5120-5120-bem-sol.fif')
         add_info_to_product(
@@ -330,10 +343,7 @@ except Exception as e:
 
 
 # == ALIGNMENT PLOT ==
-# Plot the alignment that was actually used. Previously this was gated on
-# _using_fsaverage_src and hardcoded trans='fsaverage'/subject='fsaverage', so it
-# drew only on the template path -- and on the mixed path it showed a transform
-# that was not the one the forward was computed with.
+# Draw the alignment that was actually used, on both valid paths.
 report = mne.Report(title='Forward Solution Report')
 
 try:
@@ -343,18 +353,33 @@ try:
         _align_kwargs = dict(trans='fsaverage', subject='fsaverage',
                              subjects_dir=subjects_dir, surfaces='head')
         _align_title = 'Sensor-head alignment (fsaverage template)'
+        _eeg_opts = ['original', 'projected'] if use_eeg else []
     else:
-        # This app gets no FreeSurfer directory, so the subject's head surface
-        # cannot be loaded from disk. Pass the BEM object directly instead and
-        # let plot_alignment take the subject from src (documented: "subject ...
-        # can be omitted if src is provided").
-        _align_kwargs = dict(trans=trans_obj, bem=bem_sol, surfaces=[])
-        _align_title = 'Sensor-head alignment (native BEM + trans)'
+        # This app receives no FreeSurfer directory, but the head surface can
+        # still be rendered: _get_head_surface() consults the BEM via
+        # _bem_find_surface(bem, "head") before it ever touches subjects_dir
+        # (mne/_freesurfer.py). That only works for a 3-layer BEM — a 1-layer
+        # MEG BEM has no head surface, and asking for one then raises.
+        _has_head_surf = any(
+            s.get('id') == FIFF.FIFFV_BEM_SURF_ID_HEAD
+            for s in (bem_sol.get('surfs') or [])
+        )
+        if _has_head_surf:
+            _align_kwargs = dict(trans=trans_obj, bem=bem_sol, surfaces=['head'])
+            _align_title = 'Sensor-head alignment (native BEM + trans)'
+            # 'projected' requires a head surface to project onto; we have one.
+            _eeg_opts = ['original', 'projected'] if use_eeg else []
+        else:
+            # 1-layer BEM: sensors + source points only. 'projected' must be
+            # dropped or plot_alignment raises ValueError (mne/viz/_3d.py).
+            _align_kwargs = dict(trans=trans_obj, bem=bem_sol, surfaces=[])
+            _align_title = 'Sensor alignment (native trans, 1-layer BEM — no head surface)'
+            _eeg_opts = ['original'] if use_eeg else []
 
     fig_align = mne.viz.plot_alignment(
         info,
         src=src,
-        eeg=['original', 'projected'] if use_eeg else [],
+        eeg=_eeg_opts,
         meg=['helmet', 'sensors'] if use_meg else [],
         coord_frame='mri',
         verbose=False,

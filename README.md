@@ -7,24 +7,31 @@
 Computes an MEG/EEG forward solution (lead-field matrix) using MNE-Python's
 `mne.make_forward_solution`. The forward solution maps from source space (dipoles on the
 cortical surface) to sensor space (MEG/EEG channels). It combines a pre-computed source space
-(`src.fif`), a coregistration transform (`trans.fif`), and a BEM solution (`bem-sol.fif`). If no
-source space is provided, the app falls back to an fsaverage `oct6` template source space; if no
-trans/BEM is provided and the data is EEG-only, it falls back to the fsaverage 3-layer template
-BEM (a sphere model is not used because radial dipoles give zero potential on a perfect sphere).
+(`src.fif`), a coregistration transform (`trans.fif`), and a BEM solution (`bem-sol.fif`).
+
+These three must describe the same head, so the app accepts them only all together or not at
+all. Connect all three to use the subject's own anatomy. Connect none of them, with EEG-only
+data, and the app uses the fsaverage template throughout — an `oct6` template source space,
+`trans='fsaverage'` and the fsaverage 3-layer BEM (a sphere model is not used because radial
+dipoles give zero potential on a perfect sphere). Any partial combination exits with an error
+naming what to connect: a source space is expressed in its own subject's MRI coordinates, as
+are the BEM surfaces, and `trans` maps head to that same MRI, so mixing a template with native
+anatomy places the dipoles in a different brain and silently produces a meaningless forward
+solution. MEG data always requires a native `trans` and BEM; the template path is EEG-only.
 
 The app generates:
 - the forward solution (`fwd.fif`)
 - an HTML report
-- a sensor-head alignment figure, when the fsaverage template source space is used
+- a sensor-head alignment figure, showing the transform actually used
 
 ## Inputs
 
 - **`mne`** (`neuro/meeg/mne/raw`): continuous data, used for channel info and projectors (one of `mne`/`epo`/`evoked` required)
 - **`epo`** (`neuro/meeg/mne/epochs`): epoched data, used for channel info and projectors (one of `mne`/`epo`/`evoked` required)
 - **`evoked`** (`neuro/meeg/mne/evoked`): evoked/averaged data, used for channel info and projectors (one of `mne`/`epo`/`evoked` required)
-- **`output`** (`raw`, tagged `source_space`): pre-computed source space directory from app-source-space-v2 (optional; falls back to an fsaverage `oct6` template source space if absent)
-- **`trans`** (`neuro/meeg/mne/trans`): coregistration transform from app-coreg-v2 (optional for EEG-only data, required for MEG)
-- **`fif`** (`neuro/meg/fif`): BEM solution from app-bem-v2 (optional for EEG-only data, required for MEG)
+- **`output`** (`raw`, tagged `source_space`): pre-computed source space from app-source-space-v2 (required unless `trans` and `fif` are also left unconnected)
+- **`trans`** (`neuro/meeg/mne/trans`): coregistration transform from app-coreg-v2 (required unless `output` and `fif` are also left unconnected; always required for MEG)
+- **`fif`** (`neuro/meg/fif`): BEM solution from app-bem-v2 (required unless `output` and `trans` are also left unconnected; always required for MEG)
 
 If multiple of `mne`/`epo`/`evoked` are provided, the most downstream/processed one is used, in
 the order evoked > epochs > raw.
@@ -46,10 +53,10 @@ the order evoked > epochs > raw.
 ### Running on Brainlife.io
 
 1. Select your sensor data (`mne`, `epo`, or `evoked`) as input.
-2. Optionally select a source space (`output`, from app-source-space-v2), a coregistration transform (`trans`, from app-coreg-v2), and a BEM solution (`fif`, from app-bem-v2).
+2. Select a source space (`output`, from app-source-space-v2), a coregistration transform (`trans`, from app-coreg-v2), and a BEM solution (`fif`, from app-bem-v2) — all three, or none of them. EEG-only data with none connected uses the fsaverage template.
 3. Set `mindist` if the default is not appropriate.
 4. Submit the process.
-5. Review the alignment figure (if present) and the HTML report in the output viewer.
+5. Review the alignment figure and the HTML report in the output viewer. Check that the sensors sit on the head surface and that the source points lie inside it.
 
 ### Local Testing
 
