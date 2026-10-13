@@ -160,34 +160,6 @@ if _src_dir and os.path.isdir(_src_dir):
         if _fifs:
             src_file = os.path.join(_src_dir, _fifs[0])
 
-try:
-    if src_file:
-        src = mne.read_source_spaces(src_file)
-        add_info_to_product(
-            product_items,
-            f"Loaded source space: {sum(s['nuse'] for s in src)} sources",
-            "info"
-        )
-    else:
-        # No source space provided — fall back to fsaverage oct6
-        add_info_to_product(product_items, "No source space provided — using fsaverage oct6 template.", "warning")
-        subjects_dir = mne.datasets.fetch_fsaverage(verbose=False)
-        subjects_dir = os.path.dirname(subjects_dir)  # strip /fsaverage suffix
-        src = mne.setup_source_space(
-            'fsaverage', spacing='oct6',
-            subjects_dir=subjects_dir, add_dist=False, verbose=False
-        )
-        _using_fsaverage_src = True
-        add_info_to_product(
-            product_items,
-            f"fsaverage source space: {sum(s['nuse'] for s in src)} sources",
-            "info"
-        )
-except Exception as e:
-    add_info_to_product(product_items, f"FATAL: Could not load/create source space: {e}", "error")
-    create_product_json(product_items)
-    sys.exit(1)
-
 # == LOAD TRANS AND BEM ==
 # Brainlife config keys: trans='trans', bem='fif' (meg/fif datatype)
 trans_file = config.get('trans') or None
@@ -223,6 +195,71 @@ if bem_file:
         else:
             add_info_to_product(product_items, f"BEM file not found at: {bem_file} (also tried {_alt})", "warning")
             bem_file = None
+
+# == VALIDATE INPUT COMBINATION ==
+# src, trans and bem must all describe the SAME head. A source space lives in its
+# subject's MRI coordinates, the BEM surfaces live in that same subject's MRI
+# coordinates, and trans maps head -> that subject's MRI.
+#
+# MNE does not check this. make_forward_solution() will happily combine a template
+# source space with a native BEM and return a forward solution that completes
+# without error but is anatomically meaningless; the only symptom is dipoles
+# silently discarded by the mindist containment test.
+# See https://mne.tools/stable/auto_tutorials/forward/20_source_alignment.html
+# and the template workflow in .../forward/35_eeg_no_mri.html, which takes trans,
+# src and bem all from fsaverage.
+#
+# Only two combinations are therefore allowed:
+#   all three provided -> native anatomy
+#   none provided      -> fsaverage template throughout (EEG only)
+_provided = {'source space': bool(src_file),
+             'trans': bool(trans_file),
+             'BEM': bool(bem_file)}
+_have    = [k for k, v in _provided.items() if v]
+_missing = [k for k, v in _provided.items() if not v]
+
+if _have and _missing:
+    add_info_to_product(
+        product_items,
+        "FATAL: incomplete head model — got " + ", ".join(_have) +
+        " but no " + ", ".join(_missing) + ". "
+        "The source space, BEM and trans must all come from the same subject: "
+        "mixing a template with native anatomy yields a forward solution that "
+        "looks fine but places dipoles in the wrong brain. "
+        "Either connect the missing input(s) (" + ", ".join(_missing) + "), "
+        "or disconnect all three to use the fsaverage template throughout.",
+        "error"
+    )
+    create_product_json(product_items)
+    sys.exit(1)
+
+try:
+    if src_file:
+        src = mne.read_source_spaces(src_file)
+        add_info_to_product(
+            product_items,
+            f"Loaded source space: {sum(s['nuse'] for s in src)} sources",
+            "info"
+        )
+    else:
+        # No source space provided — fall back to fsaverage oct6
+        add_info_to_product(product_items, "No source space provided — using fsaverage oct6 template.", "warning")
+        subjects_dir = mne.datasets.fetch_fsaverage(verbose=False)
+        subjects_dir = os.path.dirname(subjects_dir)  # strip /fsaverage suffix
+        src = mne.setup_source_space(
+            'fsaverage', spacing='oct6',
+            subjects_dir=subjects_dir, add_dist=False, verbose=False
+        )
+        _using_fsaverage_src = True
+        add_info_to_product(
+            product_items,
+            f"fsaverage source space: {sum(s['nuse'] for s in src)} sources",
+            "info"
+        )
+except Exception as e:
+    add_info_to_product(product_items, f"FATAL: Could not load/create source space: {e}", "error")
+    create_product_json(product_items)
+    sys.exit(1)
 
 # == COMPUTE FORWARD SOLUTION ==
 trans_obj = None
@@ -292,37 +329,49 @@ except Exception as e:
     sys.exit(1)
 
 
-# == ALIGNMENT PLOT (fsaverage template only) ==
+# == ALIGNMENT PLOT ==
+# Plot the alignment that was actually used. Previously this was gated on
+# _using_fsaverage_src and hardcoded trans='fsaverage'/subject='fsaverage', so it
+# drew only on the template path -- and on the mixed path it showed a transform
+# that was not the one the forward was computed with.
 report = mne.Report(title='Forward Solution Report')
 
-if _using_fsaverage_src:
+try:
+    setup_offscreen_3d_backend()
+
+    if _using_fsaverage_src:
+        _align_kwargs = dict(trans='fsaverage', subject='fsaverage',
+                             subjects_dir=subjects_dir, surfaces='head')
+        _align_title = 'Sensor-head alignment (fsaverage template)'
+    else:
+        # This app gets no FreeSurfer directory, so the subject's head surface
+        # cannot be loaded from disk. Pass the BEM object directly instead and
+        # let plot_alignment take the subject from src (documented: "subject ...
+        # can be omitted if src is provided").
+        _align_kwargs = dict(trans=trans_obj, bem=bem_sol, surfaces=[])
+        _align_title = 'Sensor-head alignment (native BEM + trans)'
+
+    fig_align = mne.viz.plot_alignment(
+        info,
+        src=src,
+        eeg=['original', 'projected'] if use_eeg else [],
+        meg=['helmet', 'sensors'] if use_meg else [],
+        coord_frame='mri',
+        verbose=False,
+        **_align_kwargs,
+    )
+    align_path = os.path.join('out_figs', 'alignment.png')
+    fig_align.plotter.show(auto_close=False)
+    fig_align.plotter.screenshot(align_path)
     try:
-        setup_offscreen_3d_backend()
+        fig_align.plotter.close()
+    except Exception:
+        pass
+    add_image_to_product(product_items, _align_title, filepath=align_path)
+    report.add_image(align_path, title=_align_title)
 
-        fig_align = mne.viz.plot_alignment(
-            info,
-            trans='fsaverage',
-            subject='fsaverage',
-            subjects_dir=subjects_dir,
-            surfaces='head',
-            src=src,
-            eeg=['original', 'projected'] if use_eeg else [],
-            meg=['helmet', 'sensors'] if use_meg else [],
-            coord_frame='mri',
-            verbose=False,
-        )
-        align_path = os.path.join('out_figs', 'alignment.png')
-        fig_align.plotter.show(auto_close=False)
-        fig_align.plotter.screenshot(align_path)
-        try:
-            fig_align.plotter.close()
-        except Exception:
-            pass
-        add_image_to_product(product_items, 'Sensor–head alignment (fsaverage)', filepath=align_path)
-        report.add_image(align_path, title='Sensor–head alignment (fsaverage template)')
-
-    except Exception as e:
-        add_info_to_product(product_items, f"Could not render alignment plot: {e}", "warning")
+except Exception as e:
+    add_info_to_product(product_items, f"Could not render alignment plot: {e}", "warning")
 
 # == SAVE REPORT ==
 report.save(os.path.join('out_report', 'report.html'), overwrite=True)
