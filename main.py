@@ -107,10 +107,12 @@ try:
             "FATAL: No sensor data found. Set 'evoked', 'epochs', or 'raw' in config.json.",
             "error"
         )
+        print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
         create_product_json(product_items)
         sys.exit(1)
 except Exception as e:
     add_info_to_product(product_items, f"FATAL: Could not load sensor data: {e}", "error")
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -132,6 +134,7 @@ else:
         f"FATAL: No MEG or EEG channels found. Types present: {set(ch_types)}",
         "error"
     )
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -180,6 +183,7 @@ except (TypeError, ValueError) as e:
         f"FATAL: Invalid 'mindist' value: {config.get('mindist')!r} ({e})",
         "error"
     )
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -189,6 +193,7 @@ if mindist < 0:
         f"FATAL: 'mindist' must be >= 0 mm (got {mindist}).",
         "error"
     )
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -255,6 +260,7 @@ if src_file:
         )
     except Exception as e:
         add_info_to_product(product_items, f"FATAL: Could not load source space: {e}", "error")
+        print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
         create_product_json(product_items)
         sys.exit(1)
 
@@ -266,6 +272,7 @@ if _n_headmodel == 1:
         "is missing. trans and BEM must be supplied together.",
         "error"
     )
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -279,6 +286,7 @@ if _n_headmodel == 2 and not src_file:
         "FreeSurfer subject as the BEM), or disconnect the trans and BEM too.",
         "error"
     )
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -298,6 +306,7 @@ if _n_headmodel == 0 and src_file:
                "so consistency cannot be verified)") + ".",
             "error"
         )
+        print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
         create_product_json(product_items)
         sys.exit(1)
     add_info_to_product(
@@ -311,6 +320,7 @@ if _n_headmodel == 0 and src_file:
         subjects_dir = os.path.dirname(mne.datasets.fetch_fsaverage(verbose=False))
     except Exception as e:
         add_info_to_product(product_items, f"FATAL: Could not fetch fsaverage: {e}", "error")
+        print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
         create_product_json(product_items)
         sys.exit(1)
 
@@ -337,6 +347,7 @@ if not src_file:
         )
     except Exception as e:
         add_info_to_product(product_items, f"FATAL: Could not create fsaverage source space: {e}", "error")
+        print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
         create_product_json(product_items)
         sys.exit(1)
 
@@ -442,6 +453,7 @@ except Exception as e:
         add_info_to_product(product_items, f"FATAL: {e}\n\n{_advice}", "error")
     else:
         add_info_to_product(product_items, f"FATAL: Forward solution failed: {e}", "error")
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
@@ -453,6 +465,7 @@ try:
     add_info_to_product(product_items, f"Saved and verified: {fwd_path}", "info")
 except Exception as e:
     add_info_to_product(product_items, f"FATAL: Could not save forward solution: {e}", "error")
+    print(f"ERROR: {product_items[-1]['msg']}", file=sys.stderr)
     create_product_json(product_items)
     sys.exit(1)
 
