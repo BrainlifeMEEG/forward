@@ -12,8 +12,12 @@ cortical surface) to sensor space (MEG/EEG channels). It combines a pre-computed
 These three must describe the same head. A source space is expressed in its own subject's
 MRI coordinates, the BEM surfaces are in that same subject's MRI coordinates, and `trans`
 maps head to that MRI — so mixing a template with native anatomy places the dipoles in a
-different brain. MNE does not check this and will return a forward solution that completes
-without error but is anatomically meaningless, so the app checks it instead. See
+different brain. MNE does not check this and will return a forward solution that completes without error
+but is anatomically meaningless. The app therefore refuses the combinations it *can*
+detect — a template source space against a native head model, or the reverse. When all
+three inputs are connected it cannot verify they come from the same subject, because a
+BEM solution and a trans carry no subject name; instead it reports how many dipoles were
+discarded as outside the inner skull, which is where such a mismatch shows up. See
 **How the app decides what to do** below.
 
 The app generates:
@@ -77,7 +81,7 @@ the order evoked > epochs > raw.
 
 - `out_dir/fwd.fif` (`neuro/meeg/mne/forward-inverse`): the forward solution (lead-field matrix)
 - `out_report/report.html`: HTML report
-- `out_figs/alignment.png`: sensor-head alignment figure (only when the fsaverage template source space is used)
+- `out_figs/alignment.png`: sensor-head alignment figure, showing the transform actually used (produced on both the native and template paths)
 
 ## Configuration Parameters
 
@@ -99,7 +103,7 @@ the order evoked > epochs > raw.
 
 ```bash
 # Edit config.json to point "mne"/"epo"/"evoked", "output", "trans" and "fif" at real files, then:
-python main.py
+python3 main.py
 ```
 
 ## Pipeline Position

@@ -170,8 +170,10 @@ elif _src_dir and os.path.isdir(_src_dir):
 # Brainlife config keys: trans='trans', bem='fif' (meg/fif datatype)
 trans_file = config.get('trans') or None
 bem_file   = config.get('fif') or None
+_mindist_raw = config.get('mindist')
 try:
-    mindist = float(config.get('mindist') or 5.0)
+    # `or 5.0` would swallow a legitimate 0, which is MNE's own default.
+    mindist = 5.0 if _mindist_raw in (None, '', 'None') else float(_mindist_raw)
 except (TypeError, ValueError) as e:
     add_info_to_product(
         product_items,
@@ -190,6 +192,15 @@ if mindist < 0:
     create_product_json(product_items)
     sys.exit(1)
 
+if trans_file and os.path.isdir(trans_file):
+    # Brainlife may map the datatype to its directory rather than the file.
+    _t_alt = os.path.join(trans_file, 'trans.fif')
+    if os.path.isfile(_t_alt):
+        trans_file = _t_alt
+    else:
+        _tfifs = [f for f in os.listdir(trans_file) if f.endswith('.fif')]
+        trans_file = os.path.join(trans_file, _tfifs[0]) if _tfifs else trans_file
+
 if trans_file:
     if os.path.isfile(trans_file):
         add_info_to_product(product_items, f"Trans file: {trans_file}", "info")
@@ -202,7 +213,7 @@ if bem_file:
         add_info_to_product(product_items, f"BEM file: {bem_file}", "info")
     else:
         # meg/fif datatype names the file meg.fif — try bem-sol.fif in the same directory
-        _bem_dir = os.path.dirname(bem_file)
+        _bem_dir = bem_file if os.path.isdir(bem_file) else os.path.dirname(bem_file)
         _alt = os.path.join(_bem_dir, 'bem-sol.fif')
         if os.path.isfile(_alt):
             bem_file = _alt
@@ -235,6 +246,7 @@ if src_file:
     try:
         src = mne.read_source_spaces(src_file)
         src_subject = src[0].get('subject_his_id')
+        _n_src_before = sum(sp['nuse'] for sp in src)
         add_info_to_product(
             product_items,
             f"Loaded source space: {sum(s['nuse'] for s in src)} sources"
@@ -295,7 +307,12 @@ if _n_headmodel == 0 and src_file:
         "info"
     )
     _using_fsaverage_src = True
-    subjects_dir = os.path.dirname(mne.datasets.fetch_fsaverage(verbose=False))
+    try:
+        subjects_dir = os.path.dirname(mne.datasets.fetch_fsaverage(verbose=False))
+    except Exception as e:
+        add_info_to_product(product_items, f"FATAL: Could not fetch fsaverage: {e}", "error")
+        create_product_json(product_items)
+        sys.exit(1)
 
 if not src_file:
     # Nothing supplied at all — build the fsaverage template source space.
@@ -312,9 +329,10 @@ if not src_file:
             subjects_dir=subjects_dir, add_dist=False, verbose=False
         )
         _using_fsaverage_src = True
+        _n_src_before = sum(sp['nuse'] for sp in src)
         add_info_to_product(
             product_items,
-            f"fsaverage source space: {sum(s['nuse'] for s in src)} sources",
+            f"fsaverage source space: {_n_src_before} sources",
             "info"
         )
     except Exception as e:
@@ -333,7 +351,7 @@ try:
         fwd = mne.make_forward_solution(
             info, trans=trans_obj, src=src, bem=bem_sol,
             meg=use_meg, eeg=use_eeg,
-            mindist=mindist, n_jobs=1, verbose=True
+            mindist=mindist, n_jobs=1
         )
 
     else:
@@ -373,7 +391,7 @@ try:
         fwd = mne.make_forward_solution(
             info, trans='fsaverage', src=src, bem=_bem_path,
             meg=use_meg, eeg=use_eeg,
-            mindist=mindist, n_jobs=1, verbose=True
+            mindist=mindist, n_jobs=1
         )
 
     _method = "native BEM + trans" if (trans_file and bem_file) else "fsaverage 3-layer BEM (template)"
@@ -383,23 +401,45 @@ try:
         f"{'fixed' if fwd['surf_ori'] else 'free'} orientation, {modality.upper()}, {_method}",
         "info"
     )
+    # Report dipole loss. When all three inputs are connected the app cannot
+    # verify they come from the same subject -- a BEM solution and a trans carry
+    # no subject name -- but such a mismatch shows up here, as dipoles rejected
+    # by the mindist containment test. Only the post-filter count was visible
+    # before, so a 15% loss looked identical to a 1% one.
+    _n_dropped = _n_src_before - fwd['nsource']
+    if _n_dropped > 0:
+        _pct = 100.0 * _n_dropped / _n_src_before
+        add_info_to_product(
+            product_items,
+            f"{_n_dropped} of {_n_src_before} dipoles ({_pct:.1f}%) were discarded as "
+            f"outside or within {mindist} mm of the inner skull. Some loss is normal; "
+            "a large fraction suggests the source space and BEM do not describe the "
+            "same head.",
+            "warning" if _pct > 20 else "info"
+        )
 except Exception as e:
     # make_forward_solution(on_inside='raise', the default since MNE 1.10) raises
     # when MEG sensors fall inside the outer skin surface. On the template path
     # that means the subject's head is smaller than fsaverage, which is the
     # failure MNE-BIDS-Pipeline warns about for unscaled fsaverage.
     if 'inside the' in str(e) and 'MEG sensor' in str(e):
-        add_info_to_product(
-            product_items,
-            f"FATAL: {e}\n\n"
-            "On the fsaverage template path this means this subject's head is "
-            "smaller than fsaverage, so the template scalp swallows the MEG "
-            "sensors. An unscaled template cannot be used for this recording. "
-            "Coregister against fsaverage with app-coreg-v2 (and build the BEM "
-            "and source space from the same subject), or supply the subject's "
-            "own FreeSurfer anatomy.",
-            "error"
-        )
+        if trans_file and bem_file:
+            _advice = (
+                "The supplied trans and BEM put the MEG sensors inside the head "
+                "surface. This usually means the coregistration is wrong - check "
+                "app-coreg-v2's alignment figures and head-shape distances - or "
+                "that the trans and BEM come from different subjects."
+            )
+        else:
+            _advice = (
+                "On the fsaverage template path this means this subject's head is "
+                "smaller than fsaverage, so the template scalp swallows the MEG "
+                "sensors. An unscaled template cannot be used for this recording. "
+                "Coregister against fsaverage with app-coreg-v2 (and build the BEM "
+                "and source space from the same subject), or supply the subject's "
+                "own FreeSurfer anatomy."
+            )
+        add_info_to_product(product_items, f"FATAL: {e}\n\n{_advice}", "error")
     else:
         add_info_to_product(product_items, f"FATAL: Forward solution failed: {e}", "error")
     create_product_json(product_items)
@@ -409,7 +449,8 @@ except Exception as e:
 fwd_path = os.path.join('out_dir', 'fwd.fif')
 try:
     mne.write_forward_solution(fwd_path, fwd, overwrite=True)
-    add_info_to_product(product_items, f"Saved: {fwd_path}", "info")
+    mne.read_forward_solution(fwd_path)   # must load back before we claim success
+    add_info_to_product(product_items, f"Saved and verified: {fwd_path}", "info")
 except Exception as e:
     add_info_to_product(product_items, f"FATAL: Could not save forward solution: {e}", "error")
     create_product_json(product_items)

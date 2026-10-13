@@ -14,7 +14,11 @@ if [ -n "$FS_LICENSE" ] && [ -f "$FS_LICENSE" ]; then
 elif [ -n "$FREESURFER_LICENSE" ]; then
     echo $FREESURFER_LICENSE > license.txt
 else
-    echo "Please set FREESURFER_LICENSE or FS_LICENSE in resource environment" && exit 1
+    # This app runs no FreeSurfer binary - it only uses MNE - so a missing
+    # license must not fail the job. Write a placeholder so the bind below
+    # still has a file to mount.
+    echo "No FREESURFER_LICENSE or FS_LICENSE set; continuing (not needed by this app)"
+    : > license.txt
 fi
 
 singularity --silent exec \
