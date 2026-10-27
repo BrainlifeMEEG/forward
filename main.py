@@ -527,7 +527,13 @@ except Exception as e:
     add_info_to_product(product_items, f"Could not render alignment plot: {e}", "warning")
 
 # == SAVE REPORT ==
-report.save(os.path.join('out_report', 'report.html'), overwrite=True)
+# A failed report must not cost us product.json: the real output is
+# already on disk by this point, and an unguarded failure here would
+# exit with a bare traceback and no diagnostics at all.
+try:
+    report.save(os.path.join('out_report', 'report.html'), overwrite=True)
+except Exception as e:
+    add_info_to_product(product_items, f"Could not save HTML report: {e}", "warning")
 
 add_info_to_product(product_items, "Forward solution computed successfully.", "success")
 create_product_json(product_items)
