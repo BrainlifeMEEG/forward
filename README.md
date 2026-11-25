@@ -1,5 +1,51 @@
 # Make Forward Solution
 
+<!-- brainlife-app:begin (generated from the App manifest; edit the manifest, not this block) -->
+
+> **Computes an MEG/EEG forward solution (lead field) with MNE-Python make_forward_solution from the subject's source space, coregistration transform and BEM, or from the fsaverage template when none are given.**
+
+Combines channel information from raw, epoched or evoked data with a source space, a head-to-MRI transform and a BEM solution to compute the lead-field matrix (fwd.fif), plus a sensor-head alignment figure and an HTML report. Supply source space, trans and BEM all together for a native-anatomy forward model, or none of them to use the fsaverage oct6 template (no coregistration, so source locations can be off by several centimetres). Mixed combinations that pair a template with native anatomy are refused. Use it before computing an inverse solution.
+
+| | |
+|---|---|
+| 📥 **Inputs** | `neuro/meeg/mne/epochs` (optional) · `neuro/meeg/mne/evoked` (optional) · `neuro/meeg/mne/raw` (optional) · `raw` (optional) · `neuro/meeg/mne/trans` (optional) · `neuro/meg/fif` (optional) |
+| 📤 **Outputs** | `neuro/meeg/mne/forward-inverse` |
+| 🐳 **Container** | `brainlifemeeg/mne-freesurfer:1.12.1-7.4.1` |
+| ⚙️ **Resources** | 1 CPUs · 20 GB memory · 2 h walltime |
+| 🔑 **Requires** | `FREESURFER_LICENSE`, `FS_LICENSE` |
+| 🔗 **Run it** | [doi.org/10.25663/brainlife.app.904](https://doi.org/10.25663/brainlife.app.904) |
+
+#### 📥 Inputs
+
+| Input | Datatype | Required | Description |
+|---|---|---|---|
+| `epochs` | `neuro/meeg/mne/epochs` | no | Epoched data, used for channel information and projectors. At least one of raw, epochs or evoked is required; the most processed one is used (evoked > epochs > raw). |
+| `evoked` | `neuro/meeg/mne/evoked` | no | Evoked (averaged) data, used for channel information and projectors. |
+| `raw` | `neuro/meeg/mne/raw` | no | Continuous data, used for channel information and projectors. |
+| `src` | `raw` (source_space) | no | Pre-computed source space (src.fif), e.g. from app-source-space-v2. Give together with trans and bem, or leave all three empty (an fsaverage source space alone is also accepted). |
+| `trans` | `neuro/meeg/mne/trans` | no | Head-to-MRI coregistration transform, e.g. from app-coreg-v2. Must be given together with the BEM. |
+| `bem` | `neuro/meg/fif` | no | BEM solution (bem-sol.fif), e.g. from app-bem-v2. Must be given together with trans and describe the same subject as the source space. |
+
+#### 📤 Outputs
+
+| Output | Datatype | Description |
+|---|---|---|
+| `out_dir` | `neuro/meeg/mne/forward-inverse` | Forward solution (fwd.fif). |
+
+<details>
+<summary><b>⚙️ Parameters</b> (1)</summary>
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `mindist` | number | `5` | Minimum distance of sources from inner skull surface (in mm). |
+
+</details>
+
+📚 **References used by this App:**
+- Gramfort A. et al. MEG and EEG data analysis with MNE-Python. Frontiers in Neuroscience 7:267 (2013). [doi:10.3389/fnins.2013.00267](https://doi.org/10.3389/fnins.2013.00267)
+
+<!-- brainlife-app:end -->
+
 [![Run on Brainlife.io](https://img.shields.io/badge/Brainlife-bl.app.904-blue.svg)](https://doi.org/10.25663/brainlife.app.904)
 
 ## Description
